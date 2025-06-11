@@ -351,6 +351,33 @@ Duration format: 1d, 2h, 30m</div>
 Example: pls say #general Hello!</div>
                     <div class="permission-badge staff">Requires: Send Messages</div>
                 </div>
+                
+                <!-- Auto Slowmode -->
+                <div class="command-card">
+                    <div class="command-name">slowmode add</div>
+                    <div class="command-desc">Add automatic slowmode to the current channel</div>
+                    <div class="command-usage">pls slowmode add [sensitivity]
+Example: pls slowmode add 5.0
+Default sensitivity is 5.0 (max 10.0)</div>
+                    <div class="permission-badge staff">Requires: Manage Channels</div>
+                </div>
+                
+                <div class="command-card">
+                    <div class="command-name">slowmode remove</div>
+                    <div class="command-desc">Remove automatic slowmode from the current channel</div>
+                    <div class="command-usage">pls slowmode remove</div>
+                    <div class="permission-badge staff">Requires: Manage Channels</div>
+                </div>
+                
+                <div class="command-card">
+                    <div class="command-name">slowmode set sensitivity</div>
+                    <div class="command-desc">Set the sensitivity of auto slowmode</div>
+                    <div class="command-usage">pls slowmode set sensitivity [value]
+Example: pls slowmode set sensitivity 7.5
+Higher values = more aggressive slowmode
+Range: 0.1 to 10.0</div>
+                    <div class="permission-badge staff">Requires: Manage Channels</div>
+                </div>
             </div>
         </section>
 
