@@ -208,6 +208,7 @@
                     <div class="command-name">about</div>
                     <div class="command-desc">Learn about this bot</div>
                     <div class="command-usage">pls about</div>
+                    <div class="permission-badge">Everyone</div>
                 </div>
 
                 <!-- Google -->
@@ -216,6 +217,7 @@
                     <div class="command-desc">Search Google and return the top results</div>
                     <div class="command-usage">pls google [query]</div>
                     <div class="command-usage">Example: pls google how to code</div>
+                    <div class="permission-badge">Everyone</div>
                 </div>
 
                 <!-- Timezone -->
@@ -226,6 +228,7 @@
 Examples:
 pls timezone America/New_York
 pls timezone (shows help)</div>
+                    <div class="permission-badge">Everyone</div>
                 </div>
 
                 <!-- Roll -->
@@ -236,6 +239,7 @@ pls timezone (shows help)</div>
 Examples:
 pls roll 1d6
 pls roll 2d20</div>
+                    <div class="permission-badge">Everyone</div>
                 </div>
 
                 <!-- Timefor -->
@@ -248,6 +252,7 @@ pls timefor
 pls timefor @User
 pls timefor 2PM
 pls timefor @User 14:00</div>
+                    <div class="permission-badge">Everyone</div>
                 </div>
 
                 <!-- Staff -->
@@ -378,9 +383,69 @@ Example: pls say #general Hello!</div>
                 <!-- Voice Group -->
                 <div class="command-card">
                     <div class="command-name">voice</div>
-                    <div class="command-desc">Apartment room management commands</div>
-                    <div class="command-usage">pls voice [subcommand]</div>
-                    <div class="permission-badge admin">Requires: Administrator</div>
+                    <div class="command-desc">Manage your personal apartment room</div>
+                    <div class="command-usage">pls voice [subcommand]
+
+Available subcommands:
+• help - Show apartment room commands
+• limit [number] - Set user limit (0 for unlimited)
+• lock - Lock room (sets user limit to 1)
+• unlock - Unlock room (sets user limit to 0)
+• name [new_name] - Rename your apartment
+• kick @user - Kick a user from your room
+• ban @user - Ban a user from your room</div>
+                    <div class="permission-badge">Everyone</div>
+                </div>
+                
+                <div class="command-card">
+                    <div class="command-name">voice help</div>
+                    <div class="command-desc">Show apartment room commands and current settings</div>
+                    <div class="command-usage">pls voice help</div>
+                    <div class="permission-badge">Everyone</div>
+                </div>
+                
+                <div class="command-card">
+                    <div class="command-name">voice limit</div>
+                    <div class="command-desc">Set the maximum number of users in your apartment (0 for unlimited)</div>
+                    <div class="command-usage">pls voice limit [number]
+Examples:
+pls voice limit 5
+pls voice limit 0 (for unlimited users)</div>
+                    <div class="permission-badge">Everyone</div>
+                </div>
+                
+                <div class="command-card">
+                    <div class="command-name">voice lock/unlock</div>
+                    <div class="command-desc">Lock (limit to 1 user) or unlock (no limit) your apartment</div>
+                    <div class="command-usage">pls voice lock
+pls voice unlock</div>
+                    <div class="permission-badge">Everyone</div>
+                </div>
+                
+                <div class="command-card">
+                    <div class="command-name">voice name</div>
+                    <div class="command-desc">Rename your apartment room</div>
+                    <div class="command-usage">pls voice name [new_name]
+Example:
+pls voice name Cool Hangout</div>
+                    <div class="permission-badge">Everyone</div>
+                </div>
+                
+                <div class="command-card">
+                    <div class="command-name">voice kick</div>
+                    <div class="command-desc">Remove someone from your apartment room</div>
+                    <div class="command-usage">pls voice kick @user
+Example:
+pls voice kick @Troublemaker</div>
+                    <div class="permission-badge">Everyone</div>
+                </div>
+                
+                <div class="command-card">
+                    <div class="command-name">voice ban</div>
+                    <div class="command-desc">Ban or unban someone from your apartment room</div>
+                    <div class="command-usage">pls voice ban @user
+(Use the same command to unban)</div>
+                    <div class="permission-badge">Everyone</div>
                 </div>
             </div>
         </section>
