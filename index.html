@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>The World Machine Documentation</title>
+    <title>The World Machine: Documentation</title>
     <style>
         :root {
             --bg-color: #1a1a1a;
             --text-color: #ffffff;
-            --accent-color: #7289da;
+            --accent-color: #8E6578;
             --card-bg: #2d2d2d;
             --border-color: #404040;
         }
@@ -121,6 +121,14 @@
             font-size: 0.8rem;
             margin-top: 10px;
             font-weight: 500;
+        }
+
+        .permission-badge.staff {
+            background: #f39c12;
+        }
+
+        .permission-badge.admin {
+            background: #e74c3c;
         }
 
         .permission-badge.staff {
@@ -376,11 +384,28 @@ Example: pls say #general Hello!</div>
             </div>
         </section>
 
-        <!-- Config Commands -->
+        <!-- Configuration Commands -->
         <section id="config-commands" class="category">
             <div class="category-header">Configuration Commands</div>
             <div class="commands-grid">
-                <!-- Voice Group -->
+                <!-- Config Command -->
+                <div class="command-card">
+                    <div class="command-name">config</div>
+                    <div class="command-desc">Server configuration management</div>
+                    <div class="command-usage">pls config [subcommand]
+
+Available subcommands:
+• get - Get current server config
+• set - Update server config
+• view - View current settings
+
+Example:
+pls config get (shows current config)
+pls config set (updates config)</div>
+                    <div class="permission-badge admin">Requires: Administrator</div>
+                </div>
+
+                <!-- Voice Command -->
                 <div class="command-card">
                     <div class="command-name">voice</div>
                     <div class="command-desc">Manage your personal apartment room</div>
@@ -427,7 +452,7 @@ pls voice unlock</div>
                     <div class="command-desc">Rename your apartment room</div>
                     <div class="command-usage">pls voice name [new_name]
 Example:
-pls voice name Cool Hangout</div>
+pls voice name Example/div>
                     <div class="permission-badge">Everyone</div>
                 </div>
                 
@@ -436,7 +461,7 @@ pls voice name Cool Hangout</div>
                     <div class="command-desc">Remove someone from your apartment room</div>
                     <div class="command-usage">pls voice kick @user
 Example:
-pls voice kick @Troublemaker</div>
+pls voice kick @User</div>
                     <div class="permission-badge">Everyone</div>
                 </div>
                 
