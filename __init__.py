@@ -32,12 +32,11 @@ class Bot(commands.Bot):
         self.initial_extensions = [
             'cogs.tossing',
             'cogs.moderation',
-            'cogs.kane_commands',
             'cogs.apartment_rooms',
             'cogs.auto_slowmode',
             'cogs.basic',
-            'cogs.vc_tts',
-
+            'cogs.config_cog',
+            'cogs.welcome_cog',
         ]
 
     async def setup_hook(self):
@@ -139,5 +138,5 @@ bot = Bot()
 
 
 if __name__ == '__main__':
-    Config.validate()
+    Config.validate_config()
     bot.run(Config.TOKEN)
