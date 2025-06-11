@@ -1,0 +1,8 @@
+python-dotenv
+PyYAML
+discord.py
+python-dateutil
+aiosqlite
+black
+flake8
+isort
