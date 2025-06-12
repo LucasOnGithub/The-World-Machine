@@ -124,6 +124,11 @@ class ErrorMessages:
             "{normal} That's not a member on this server.",
             "{huh} You either gave me something wrong, or that member isn't on this server...",
             "{normal} I looked, that's not a member here."
+        ],
+        'missing_required_argument': [
+            "{huh} You're missing a required argument for that command.",
+            "{unamused} I need more information to do that. Check the command usage.",
+            "{normal} You forgot to include a required argument. Try again?"
         ]
     }
     
