@@ -32,15 +32,11 @@ class Bot(commands.Bot):
         self.initial_extensions = [
             'cogs.tossing',
             'cogs.moderation',
-            'cogs.kane_commands',
             'cogs.apartment_rooms',
             'cogs.auto_slowmode',
             'cogs.basic',
-            'cogs.vc_tts',
-            'cogs.gif_logger',
             'cogs.config_cog',
             'cogs.welcome_cog',
-            'cogs.bot_reports',
         ]
 
     async def setup_hook(self):
