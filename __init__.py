@@ -32,11 +32,15 @@ class Bot(commands.Bot):
         self.initial_extensions = [
             'cogs.tossing',
             'cogs.moderation',
+            'cogs.kane_commands',
             'cogs.apartment_rooms',
             'cogs.auto_slowmode',
             'cogs.basic',
+            'cogs.vc_tts',
+            'cogs.gif_logger',
             'cogs.config_cog',
             'cogs.welcome_cog',
+            'cogs.bot_reports',
         ]
 
     async def setup_hook(self):
@@ -60,6 +64,29 @@ class Bot(commands.Bot):
         print(f'Logged in as {self.user} (ID: {self.user.id})')
         await self.update_member_count()
         
+    async def on_command_error(self, ctx, error):
+        """Handle command errors globally."""
+        from discord.ext import commands
+        from config.errors import ErrorMessages
+        
+        # Get the command's cog if it exists
+        if ctx.command and hasattr(ctx.command, 'cog') and ctx.command.cog:
+            # Let the cog handle its own errors first
+            if hasattr(ctx.command.cog, 'cog_command_error'):
+                # Skip if the error is already handled by the cog
+                if not getattr(error, 'handled', False):
+                    return await ctx.command.cog.cog_command_error(ctx, error)
+        
+        # Global error handling for commands without cog-specific handlers
+        if isinstance(error, commands.MissingPermissions):
+            await ctx.send(ErrorMessages.get_error('missing_perms'))
+        elif isinstance(error, commands.NoPrivateMessage):
+            await ctx.send(ErrorMessages.get_error('servers_only'))
+        else:
+            # Log other errors
+            print(f"Error in command {ctx.command}: {error}")
+            await ctx.send(ErrorMessages.get_error('generic'))
+    
     async def update_member_count_loop(self):
         """Background task to update member count every minute."""
         await self.wait_until_ready()
