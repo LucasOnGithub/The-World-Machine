@@ -73,11 +73,26 @@ class ConfigCog(commands.Cog):
             ''', (guild_id, config_yaml))
             conn.commit()
     
+    async def _config_check(self, ctx: commands.Context) -> bool:
+        """Check if the command can be run in the current context."""
+        if not ctx.guild:
+            from discord.ext.commands import NoPrivateMessage
+            raise NoPrivateMessage()
+            
+        if not ctx.author.guild_permissions.administrator:
+            from discord.ext.commands import MissingPermissions
+            raise MissingPermissions(['administrator'])
+            
+        return True
+    
     @commands.hybrid_group(name="config", invoke_without_command=True)
-    @commands.guild_only()
-    @commands.has_permissions(administrator=True)
+    @app_commands.describe()
     async def config_group(self, ctx: commands.Context) -> None:
         """Show or manage server configuration."""
+        # Run our custom checks
+        if not await self._config_check(ctx):
+            return
+            
         print(f"[DEBUG] config_group command invoked by {ctx.author}")
         # Instead of showing help, show the current config
         await ctx.invoke(self.config_get)

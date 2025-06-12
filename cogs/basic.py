@@ -159,6 +159,29 @@ class Basic(commands.Cog):
             "useful utilities for server management and member interaction. "
             "Use `pls help` to see all available commands."
         )
+        
+    @commands.hybrid_command(name="help", description="Show help information and command documentation")
+    @app_commands.describe()
+    async def help_command(self, ctx: commands.Context) -> None:
+        """Show a link to the command documentation."""
+        embed = discord.Embed(
+            title="📚 The World Machine - Command Documentation",
+            description="Click the link below to view all available commands and their usage:",
+            color=discord.Color(0x8E6578)  # Using the purple color from the docs
+        )
+        embed.add_field(
+            name="Documentation",
+            value="[View Documentation](https://lucasongithub.github.io/the-world-machine/)",
+            inline=False
+        )
+        embed.add_field(
+            name="Prefix",
+            value="• The default prefix is `pls`, but `.` is also supported.\n",
+            inline=False
+        )
+        embed.set_footer(text="Documentation is updated regularly. Check back for new commands and features!")
+        
+        await ctx.send(embed=embed)
     
     @commands.hybrid_command(name="roll", description="Roll dice in XdY format (e.g., 2d6)")
     @app_commands.describe(dice="Dice to roll in XdY format (e.g., 2d6)")

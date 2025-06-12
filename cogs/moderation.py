@@ -30,22 +30,36 @@ class Moderation(commands.Cog):
         
     async def cog_command_error(self, ctx: commands.Context, error: Exception) -> None:
         """Handle errors for all commands in this cog."""
-        if isinstance(error, commands.NoPrivateMessage):
-            # This is raised by cog_check for DMs
-            await ctx.send(error.args[0], ephemeral=True)
-        elif isinstance(error, commands.MissingPermissions):
-            await ctx.send(ErrorMessages.get_error('missing_role'), ephemeral=True)
-        elif isinstance(error, commands.BotMissingPermissions):
-            await ctx.send(ErrorMessages.get_error('missing_perms'), ephemeral=True)
-        elif isinstance(error, commands.CommandOnCooldown):
-            await ctx.send(ErrorMessages.get_error('cooldown', time=int(error.retry_after)), ephemeral=True)
-        elif isinstance(error, commands.MemberNotFound):
-            await ctx.send(ErrorMessages.get_error('member_not_found'), ephemeral=True)
-        elif isinstance(error, commands.BadArgument):
-            await ctx.send(str(error), ephemeral=True)
-        else:
-            print(f"Unhandled error in {ctx.command}: {error}")
-            await ctx.send(ErrorMessages.get_error('generic'), ephemeral=True)
+        # Mark the error as handled
+        error.handled = True
+        
+        try:
+            if isinstance(error, commands.NoPrivateMessage):
+                # This is raised by cog_check for DMs
+                await ctx.send(error.args[0], ephemeral=True)
+            elif isinstance(error, commands.MissingPermissions):
+                await ctx.send(ErrorMessages.get_error('missing_role'), ephemeral=True)
+            elif isinstance(error, commands.MissingRequiredArgument):
+                await ctx.send(ErrorMessages.get_error('missing_required_argument'), ephemeral=True)
+            elif isinstance(error, commands.BotMissingPermissions):
+                await ctx.send(ErrorMessages.get_error('missing_perms'), ephemeral=True)
+            elif isinstance(error, commands.CommandOnCooldown):
+                await ctx.send(ErrorMessages.get_error('cooldown', time=int(error.retry_after)), ephemeral=True)
+            elif isinstance(error, commands.MemberNotFound):
+                await ctx.send(ErrorMessages.get_error('member_not_found'), ephemeral=True)
+            elif isinstance(error, commands.BadArgument):
+                await ctx.send(str(error), ephemeral=True)
+            else:
+                # Re-raise the error to be handled by the global error handler
+                error.handled = False
+                raise error
+        except Exception as e:
+            # If we get here, there was an error in our error handler
+            print(f"Error in cog_command_error: {e}")
+            if not hasattr(error, 'handled') or not error.handled:
+                error.handled = True
+                await ctx.send(ErrorMessages.get_error('generic'), ephemeral=True)
+            raise
 
     def parse_time(self, time_str: str) -> Optional[int]:
         """Convert time string to seconds."""
@@ -197,6 +211,127 @@ class Moderation(commands.Cog):
         except Exception as e:
             await ctx.send(f"An error occurred: {e}", ephemeral=True)
 
+    @commands.hybrid_command(name="unban", description="Unban a user from the server")
+    @commands.guild_only()
+    @app_commands.describe(
+        user_id="The ID of the user to unban (required)",
+        reason="Reason for the unban"
+    )
+    async def unban(self, ctx: commands.Context, user_id: str = None, *, reason: str = None) -> None:
+        """Unban a user from the server.
+        
+        Parameters
+        ----------
+        user_id: str
+            The ID of the user to unban (required)
+        reason: Optional[str]
+            Reason for the unban (will be shown in logs)
+        """
+        # Check if user_id is provided
+        if user_id is None:
+            await ctx.send(ErrorMessages.get_error('missing_required_argument'), ephemeral=True)
+            return
+            
+        try:
+            # Convert user_id to int
+            try:
+                user_id = int(user_id)
+                user = await self.bot.fetch_user(user_id)
+            except (ValueError, discord.NotFound):
+                await ctx.send("❌ Invalid user ID. Please provide a valid user ID.", ephemeral=True)
+                return
+            
+            # Check if user is actually banned
+            try:
+                ban_entry = await ctx.guild.fetch_ban(user)
+            except discord.NotFound:
+                await ctx.send(f"❌ {user} is not banned.", ephemeral=True)
+                return
+                
+            await ctx.guild.unban(user, reason=reason)
+            await ctx.send(f"✅ Unbanned {user.mention}" + 
+                         (f" for: {reason}" if reason else ""), ephemeral=True)
+            
+            # Log the action
+            await self.log_mod_action(
+                "unbanned",
+                ctx.author,
+                user,
+                reason=reason
+            )
+            
+        except ValueError:
+            await ctx.send("❌ Invalid user ID. Please provide a valid user ID.", ephemeral=True)
+        except discord.Forbidden:
+            await ctx.send("I don't have permission to unban users!", ephemeral=True)
+        except discord.NotFound:
+            await ctx.send("User not found or not banned.", ephemeral=True)
+        except Exception as e:
+            await ctx.send(f"An error occurred: {e}", ephemeral=True)
+    
+    @commands.hybrid_command(name="unmute", description="Unmute a user")
+    @commands.guild_only()
+    @app_commands.describe(
+        member="The member to unmute (ID or mention)",
+        reason="Reason for unmuting"
+    )
+    async def unmute(
+        self,
+        ctx: commands.Context,
+        member: discord.Member = None,
+        *,
+        reason: str = None
+    ) -> None:
+        """Unmute a user.
+        
+        Parameters
+        ----------
+        member: discord.Member
+            The member to unmute (ID or mention)
+        reason: Optional[str]
+            Reason for unmuting (will be shown in logs)
+        """
+        # Check if member is provided
+        if member is None:
+            await ctx.send(ErrorMessages.get_error('missing_required_argument'), ephemeral=True)
+            return
+            
+        # Check if user has a mute role
+        from config.config import Config
+        guild_config = Config.get_guild_config(ctx.guild.id)
+        mute_role_id = guild_config.get('mute_role')
+        
+        if not mute_role_id:
+            await ctx.send("❌ Mute role is not configured for this server.", ephemeral=True)
+            return
+            
+        mute_role = ctx.guild.get_role(mute_role_id)
+        if not mute_role:
+            await ctx.send("❌ Mute role not found. Please reconfigure the mute role.", ephemeral=True)
+            return
+            
+        if mute_role not in member.roles:
+            await ctx.send(f"❌ {member.mention} is not muted.", ephemeral=True)
+            return
+            
+        try:
+            await member.remove_roles(mute_role, reason=reason)
+            await ctx.send(f"✅ Unmuted {member.mention}" + 
+                         (f" for: {reason}" if reason else ""), ephemeral=True)
+            
+            # Log the action
+            await self.log_mod_action(
+                "unmuted",
+                ctx.author,
+                member,
+                reason=reason
+            )
+            
+        except discord.Forbidden:
+            await ctx.send("I don't have permission to unmute this user!", ephemeral=True)
+        except Exception as e:
+            await ctx.send(f"An error occurred: {e}", ephemeral=True)
+    
     @commands.hybrid_command(name="kick", description="Kick a user from the server")
     @commands.guild_only()
     @app_commands.describe(
