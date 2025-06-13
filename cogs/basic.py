@@ -651,7 +651,7 @@ class Basic(commands.Cog):
         
         # Get staff role IDs from config
         from config.config import Config
-        staff_roles = Config.GUILD_CONFIG.get(str(ctx.guild.id), {}).get('staff_roles', [])
+        staff_roles = Config.get_guild_setting(ctx.guild.id, 'staff_roles', [])
         
         if not staff_roles:
             return await ctx.send("❌ No staff roles are configured for this server.", ephemeral=True)
