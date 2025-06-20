@@ -185,6 +185,76 @@ def init_ranked_maps_db():
 # Initialize the database
 init_db()
 
+class PaginatedView(discord.ui.View):
+    """A view that provides pagination for embeds."""
+    
+    def __init__(self, embeds: list[discord.Embed], timeout: float = 180.0):
+        super().__init__(timeout=timeout)
+        self.embeds = embeds
+        self.current_page = 0
+        self.update_buttons()
+    
+    def update_buttons(self):
+        """Update the state of navigation buttons based on current page."""
+        self.first_page.disabled = self.current_page == 0
+        self.previous_page.disabled = self.current_page == 0
+        self.next_page.disabled = self.current_page == len(self.embeds) - 1
+        self.last_page.disabled = self.current_page == len(self.embeds) - 1
+        self.page_counter.label = f"{self.current_page + 1}/{len(self.embeds)}"
+    
+    @discord.ui.button(emoji="⏮", style=discord.ButtonStyle.grey)
+    async def first_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Go to the first page."""
+        if self.current_page != 0:
+            self.current_page = 0
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.embeds[0], view=self)
+    
+    @discord.ui.button(emoji="◀️", style=discord.ButtonStyle.primary)
+    async def previous_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Go to the previous page."""
+        if self.current_page > 0:
+            self.current_page -= 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
+    
+    @discord.ui.button(style=discord.ButtonStyle.grey, disabled=True)
+    async def page_counter(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Display current page number (non-interactive)."""
+        pass
+    
+    @discord.ui.button(emoji="▶️", style=discord.ButtonStyle.primary)
+    async def next_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Go to the next page."""
+        if self.current_page < len(self.embeds) - 1:
+            self.current_page += 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.embeds[self.current_page], view=self)
+    
+    @discord.ui.button(emoji="⏭", style=discord.ButtonStyle.grey)
+    async def last_page(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Go to the last page."""
+        if self.current_page != len(self.embeds) - 1:
+            self.current_page = len(self.embeds) - 1
+            self.update_buttons()
+            await interaction.response.edit_message(embed=self.embeds[-1], view=self)
+    
+    @discord.ui.button(emoji="❌", style=discord.ButtonStyle.danger)
+    async def delete_message(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Delete the message."""
+        await interaction.message.delete()
+        self.stop()
+    
+    async def on_timeout(self):
+        """Disable all buttons when the view times out."""
+        for item in self.children:
+            item.disabled = True
+        try:
+            await self.message.edit(view=self)
+        except discord.NotFound:
+            pass
+
+
 class SSCTools(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -290,6 +360,129 @@ class SSCTools(commands.Cog):
                     conn.close()
                 except Exception as e:
                     logger.error(f"Error closing database connection: {e}", exc_info=True)
+
+    @app_commands.command(name="getinfo", description="Get information about a ranked map by ID or name")
+    @app_commands.describe(
+        query="The map ID or name to search for",
+        limit="Maximum number of results to return (1-10, default: 5)"
+    )
+    async def get_map_info(
+        self,
+        interaction: discord.Interaction,
+        query: str,
+        limit: int = 5
+    ):
+        """
+        Get information about a ranked map by its ID or search by name.
+        
+        Parameters
+        ----------
+        query: The map ID or name to search for
+        limit: Maximum number of results to return (1-10, default: 5)
+        """
+        await interaction.response.defer(ephemeral=False)
+        
+        # Validate limit
+        limit = max(1, min(10, limit))  # Clamp between 1 and 10
+        
+        try:
+            conn = sqlite3.connect(RANKED_MAPS_DB)
+            c = conn.cursor()
+            
+            # Check if query looks like an ID (BSR code)
+            if query.startswith('!'):
+                # Search by exact BSR code
+                c.execute("""
+                    SELECT id, song_name, characteristic, difficulty, level, category, 
+                           mapper, bsr_code, additional_info
+                    FROM ranked_maps 
+                    WHERE bsr_code = ?
+                    LIMIT ?
+                """, (query.upper(), limit))
+            else:
+                # Search by song name (case-insensitive partial match)
+                search_term = f"%{query}%"
+                c.execute("""
+                    SELECT id, song_name, characteristic, difficulty, level, category, 
+                           mapper, bsr_code, additional_info
+                    FROM ranked_maps 
+                    WHERE LOWER(song_name) LIKE LOWER(?) 
+                    ORDER BY 
+                        CASE 
+                            WHEN LOWER(song_name) = LOWER(?) THEN 0
+                            WHEN LOWER(song_name) LIKE LOWER(?) THEN 1
+                            ELSE 2
+                        END,
+                        song_name
+                    LIMIT ?
+                """, (search_term, query, f"{query}%", limit))
+            
+            results = c.fetchall()
+            
+            if not results:
+                await interaction.followup.send(
+                    f"❌ No ranked maps found matching: `{query}`. "
+                    "Try a different search term or check the spelling."
+                )
+                return
+            
+            # Create embeds for each result (up to the limit)
+            embeds = []
+            for idx, (map_id, song_name, char, diff, level, category, 
+                     mapper, bsr_code, add_info) in enumerate(results, 1):
+                
+                # Create embed with map info
+                embed = discord.Embed(
+                    title=f"{song_name}",
+                    color=discord.Color.blue(),
+                    url=f"https://beatsaver.com/maps/{bsr_code}" if bsr_code else None
+                )
+                
+                # Add fields with map details
+                embed.add_field(name="Difficulty", value=f"{char} {diff}", inline=True)
+                embed.add_field(name="Level", value=f"{level}", inline=True)
+                embed.add_field(name="Category", value=category.capitalize(), inline=True)
+                
+                if mapper:
+                    embed.add_field(name="Mapper", value=mapper, inline=True)
+                if bsr_code:
+                    embed.add_field(name="BSR", value=f"`{bsr_code}`", inline=True)
+                if add_info:
+                    embed.add_field(name="Notes", value=add_info[:256] + (add_info[256:] and '...'), inline=False)
+                
+                # Add footer with result count
+                embed.set_footer(text=f"Result {idx} of {len(results)}")
+                
+                # Try to get cover image from BeatSaver if available
+                if bsr_code:
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(f"https://api.beatsaver.com/maps/id/{bsr_code}") as resp:
+                                if resp.status == 200:
+                                    map_data = await resp.json()
+                                    if 'coverURL' in map_data:
+                                        embed.set_thumbnail(url=map_data['coverURL'])
+                    except Exception as e:
+                        logger.warning(f"Couldn't fetch cover for {bsr_code}: {e}")
+                
+                embeds.append(embed)
+            
+            # Send the embeds with pagination if more than one result
+            if len(embeds) == 1:
+                await interaction.followup.send(embed=embeds[0])
+            else:
+                # If multiple results, send the first one with navigation buttons
+                view = PaginatedView(embeds)
+                await interaction.followup.send(embed=embeds[0], view=view)
+            
+        except sqlite3.Error as e:
+            logger.error(f"Database error in get_map_info: {e}", exc_info=True)
+            await interaction.followup.send("❌ An error occurred while searching the database. Please try again later.")
+        except Exception as e:
+            logger.error(f"Error in get_map_info: {e}", exc_info=True)
+            await interaction.followup.send("❌ An unexpected error occurred. Please try again later.")
+        finally:
+            conn.close()
 
     # Role IDs for each level (1-32)
     LEVEL_ROLE_IDS = {
@@ -397,6 +590,7 @@ class SSCTools(commands.Cog):
             total_points = 0
             detailed_passes = []
             processed_songs = set()  # To avoid duplicate songs
+            disallowed_modifier_passes = []  # Track passes with disallowed modifiers
             
             # Get existing passes from database
             existing_passes = {}
@@ -440,12 +634,68 @@ class SSCTools(commands.Cog):
                 if song_key in processed_songs:
                     continue
                     
+                # Check for disallowed modifiers
+                modifiers = entry.get('modifiers', '').split(',')
+                disallowed_modifiers = {'NO', 'NB', 'NF', 'SS', 'NA', 'OP'}
+                has_disallowed_modifier = any(mod in disallowed_modifiers for mod in modifiers)
+                
                 # Find matching ranked map
                 for r_song_lower, r_char, r_diff, level, r_song_original in ranked_maps:
                     if (r_song_lower == song_name_lower and 
                         r_char == characteristic and 
                         r_diff == difficulty):
                         
+                        # Skip if this is an unranked map (level 100)
+                        if level == 100:
+                            # Check if this is a new pass for an unranked map
+                            db_song_key = f"{song_name_lower}:{characteristic}:{difficulty.replace('Expert+', 'ExpertPlus')}"
+                            existing_acc = existing_passes.get(db_song_key, 0)
+                            
+                            if acc * 100 > existing_acc and not has_disallowed_modifier:
+                                # Notify ranking team about the unranked pass
+                                ranking_team_role = interaction.guild.get_role(self.RANKING_TEAM_ROLE_ID)
+                                if ranking_team_role:
+                                    await interaction.followup.send(
+                                        f"🚨 {ranking_team_role.mention} - Unranked map passed!\n"
+                                        f"**Map:** {r_song_original} ({characteristic} {difficulty})\n"
+                                        f"**Player:** {interaction.user.mention}\n"
+                                        f"**Accuracy:** {acc*100:.2f}%\n"
+                                        f"Please update this map's level using `/updatemap` if it should be ranked.",
+                                        ephemeral=False
+                                    )
+                                
+                                # Add to database to track that we've notified about this pass
+                                pass_data = (
+                                    discord_id,
+                                    beatleader_id,
+                                    r_song_original,
+                                    characteristic,
+                                    difficulty,
+                                    level,  # This will be 100 for unranked
+                                    acc * 100,
+                                    0  # 0 points for unranked maps
+                                )
+                                
+                                if existing_acc == 0:
+                                    new_passes.append(pass_data)
+                                else:
+                                    updated_passes.append(pass_data)
+                            break
+                        
+                        # For ranked maps (level 1-32)
+                        if has_disallowed_modifier:
+                            # Track this pass for the disallowed modifiers message
+                            used_modifiers = [mod for mod in modifiers if mod in disallowed_modifiers]
+                            disallowed_modifier_passes.append((
+                                r_song_original, 
+                                level, 
+                                difficulty,
+                                used_modifiers,
+                                acc * 100
+                            ))
+                            logger.info(f"Skipping {r_song_original} - Disallowed modifiers: {modifiers}")
+                            continue
+                            
                         points = round(level * acc * 21.3)
                         total_points += points
                         passed_levels.add(level)
@@ -568,11 +818,52 @@ class SSCTools(commands.Cog):
             except Exception as e:
                 logger.error(f"Error updating roles: {e}", exc_info=True)
 
-            # Create embed
-            embed = discord.Embed(
+            # Create embeds
+            embeds = []
+            main_embed = discord.Embed(
                 title=f"🔍 Scan Results for {discord_username}",
                 color=discord.Color.green()
             )
+            embeds.append(main_embed)
+            
+            # Create a separate embed for disallowed modifier passes if any
+            if disallowed_modifier_passes:
+                disallowed_embed = discord.Embed(
+                    title="⚠️ Passes with Disallowed Modifiers",
+                    description=(
+                        "The following maps were passed with prohibited modifiers and did not count:\n"
+                        "*(NO, NB, NF, SS, NA, OP modifiers are not allowed for ranked play)*"
+                    ),
+                    color=discord.Color.orange()
+                )
+                
+                # Group passes by modifier for better organization
+                passes_by_modifier = {}
+                for song, level, diff, mods, acc in disallowed_modifier_passes:
+                    for mod in mods:
+                        if mod not in passes_by_modifier:
+                            passes_by_modifier[mod] = []
+                        passes_by_modifier[mod].append((song, level, diff, acc))
+                
+                # Add fields for each modifier
+                for mod, passes in passes_by_modifier.items():
+                    pass_list = []
+                    for song, level, diff, acc in sorted(passes, key=lambda x: x[3], reverse=True):  # Sort by accuracy descending
+                        pass_list.append(
+                            f"`{acc:5.2f}%` `{diff}` {song[:30]}{'...' if len(song) > 30 else ''} ({mod})"
+                        )
+                    
+                    # Split into chunks to avoid hitting field value length limit
+                    chunk_size = 10
+                    for i in range(0, len(pass_list), chunk_size):
+                        chunk = pass_list[i:i + chunk_size]
+                        disallowed_embed.add_field(
+                            name=f"{mod} Modifier" if i == 0 else "\u200b",  # Only show mod name in first chunk
+                            value="\n".join(chunk),
+                            inline=False
+                        )
+                
+                embeds.append(disallowed_embed)
             
             # Add stats about new/updated passes
             stats = [
@@ -588,33 +879,44 @@ class SSCTools(commands.Cog):
             if updated_passes:
                 stats.append(f"**Improved Scores:** {len(updated_passes)}")
             
-            embed.add_field(
+            main_embed.add_field(
                 name="Summary",
                 value="\n".join(stats),
                 inline=False
             )
+            
+            # Add note about disallowed modifiers if any were found
+            if disallowed_modifier_passes:
+                main_embed.add_field(
+                    name="⚠️ Note",
+                    value=(
+                        f"{len(disallowed_modifier_passes)} map(s) were passed with disallowed modifiers "
+                        "and didn't count. See below for details."
+                    ),
+                    inline=False
+                )
 
             # Add top passes
             if detailed_passes:
                 top_passes = detailed_passes[:10]  # Show top 10
                 shown = "\n".join([
-                    f"`Level{level:2d}` {name[:30]}{'...' if len(name) > 30 else ''} | "
+                    f"`Level {level:2d}` {name[:30]}{'...' if len(name) > 30 else ''} | "
                     f"{acc:.1f}% → {pts:4d} pts"
                     f"{' 🆕' if is_new else ''}"
                     for name, level, acc, pts, is_new in top_passes
                 ])
                 
-                embed.add_field(
-                    name=f"Top {min(10, len(detailed_passes))} Best Passes",
+                main_embed.add_field(
+                    name=f"Top {len(top_passes)} Best Passes" if len(detailed_passes) > 10 else "Best Passes",
                     value=shown,
                     inline=False
                 )
                 
                 if len(detailed_passes) > 10:
-                    embed.set_footer(text=f"Showing 10 of {len(detailed_passes)} passed maps")
+                    main_embed.set_footer(text=f"Showing 10 of {len(detailed_passes)} passed maps")
 
-            # Send results as a non-ephemeral message (visible to everyone)
-            await interaction.followup.send(embed=embed, ephemeral=False)
+            # Send all embeds
+            await interaction.followup.send(embeds=embeds)
             logger.info(f"Successfully completed scan for user {discord_username}")
             
         except Exception as e:
@@ -625,6 +927,19 @@ class SSCTools(commands.Cog):
                 pass
 
     @app_commands.command(name="rankmap", description="Rank a Beat Saber map")
+    @app_commands.describe(
+        bsr_code="The BeatSaver ID or URL of the map",
+        category="The category of the map",
+        level="The difficulty level (1-32 for ranked, 100 for unranked)",
+        characteristic="The map characteristic",
+        difficulty="The difficulty name",
+        additional_info="Optional additional information about the map ranking"
+    )
+    @app_commands.choices(
+        category=[app_commands.Choice(name=c, value=c) for c in ["tech", "jumps", "streams", "shitpost", "vibro"]],
+        characteristic=[app_commands.Choice(name=c, value=c) for c in ["Standard", "Lawless", "OneSaber"]],
+        difficulty=[app_commands.Choice(name=d, value=d) for d in ["Easy", "Normal", "Hard", "Expert", "Expert+"]]
+    )
     @app_commands.checks.has_role(RANKING_TEAM_ROLE_ID)
     async def rankmap(
         self,
@@ -636,6 +951,13 @@ class SSCTools(commands.Cog):
         difficulty: Literal["Easy", "Normal", "Hard", "Expert", "Expert+"],
         additional_info: Optional[str] = None
     ):
+        # Validate level (1-32 or exactly 100)
+        if level != 100 and not (1 <= level <= 32):
+            await interaction.response.send_message(
+                "❌ Level must be between 1-32 for ranked maps, or exactly 100 for unranked maps.",
+                ephemeral=True
+            )
+            return
         """Rank a Beat Saber map.
         
         Parameters
