@@ -128,6 +128,21 @@ def init_approved_users_db():
                 UNIQUE(discord_id, song_name, characteristic, difficulty)
             )
         ''')
+        c.execute('''
+            CREATE TABLE IF NOT EXISTS disallowed_passes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                discord_id TEXT NOT NULL,
+                beatleader_id TEXT NOT NULL,
+                song_name TEXT NOT NULL,
+                characteristic TEXT NOT NULL,
+                difficulty TEXT NOT NULL,
+                level INTEGER NOT NULL,
+                accuracy REAL NOT NULL,
+                modifiers TEXT NOT NULL,
+                passed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(discord_id, song_name, characteristic, difficulty, modifiers)
+            )
+        ''')
         # Create index for faster lookups
         c.execute('CREATE INDEX IF NOT EXISTS idx_user_passes_discord ON user_passes(discord_id)')
         c.execute('CREATE INDEX IF NOT EXISTS idx_user_passes_bl ON user_passes(beatleader_id)')
@@ -394,9 +409,9 @@ class SSCTools(commands.Cog):
                 # Search by exact BSR code
                 c.execute("""
                     SELECT id, song_name, characteristic, difficulty, level, category, 
-                           mapper, bsr_code, additional_info
+                           ranked_by, id, cover_url
                     FROM ranked_maps 
-                    WHERE bsr_code = ?
+                    WHERE id = ?
                     LIMIT ?
                 """, (query.upper(), limit))
             else:
@@ -404,7 +419,7 @@ class SSCTools(commands.Cog):
                 search_term = f"%{query}%"
                 c.execute("""
                     SELECT id, song_name, characteristic, difficulty, level, category, 
-                           mapper, bsr_code, additional_info
+                           ranked_by, id, cover_url
                     FROM ranked_maps 
                     WHERE LOWER(song_name) LIKE LOWER(?) 
                     ORDER BY 
@@ -429,7 +444,7 @@ class SSCTools(commands.Cog):
             # Create embeds for each result (up to the limit)
             embeds = []
             for idx, (map_id, song_name, char, diff, level, category, 
-                     mapper, bsr_code, add_info) in enumerate(results, 1):
+                     ranked_by, bsr_code, cover_url) in enumerate(results, 1):
                 
                 # Create embed with map info
                 embed = discord.Embed(
@@ -443,15 +458,18 @@ class SSCTools(commands.Cog):
                 embed.add_field(name="Level", value=f"{level}", inline=True)
                 embed.add_field(name="Category", value=category.capitalize(), inline=True)
                 
-                if mapper:
-                    embed.add_field(name="Mapper", value=mapper, inline=True)
+                if ranked_by:
+                    embed.add_field(name="Ranked By", value=f"<@{ranked_by}>", inline=True)
                 if bsr_code:
                     embed.add_field(name="BSR", value=f"`{bsr_code}`", inline=True)
-                if add_info:
-                    embed.add_field(name="Notes", value=add_info[:256] + (add_info[256:] and '...'), inline=False)
+
                 
                 # Add footer with result count
                 embed.set_footer(text=f"Result {idx} of {len(results)}")
+                
+                # Add cover image if available
+                if cover_url:
+                    embed.set_thumbnail(url=cover_url)
                 
                 # Try to get cover image from BeatSaver if available
                 if bsr_code:
@@ -635,9 +653,10 @@ class SSCTools(commands.Cog):
                     continue
                     
                 # Check for disallowed modifiers
-                modifiers = entry.get('modifiers', '').split(',')
+                modifiers = [m for m in entry.get('modifiers', '').split(',') if m]
                 disallowed_modifiers = {'NO', 'NB', 'NF', 'SS', 'NA', 'OP'}
-                has_disallowed_modifier = any(mod in disallowed_modifiers for mod in modifiers)
+                used_disallowed_mods = [m for m in modifiers if m in disallowed_modifiers]
+                has_disallowed_modifier = len(used_disallowed_mods) > 0
                 
                 # Find matching ranked map
                 for r_song_lower, r_char, r_diff, level, r_song_original in ranked_maps:
@@ -684,16 +703,62 @@ class SSCTools(commands.Cog):
                         
                         # For ranked maps (level 1-32)
                         if has_disallowed_modifier:
-                            # Track this pass for the disallowed modifiers message
-                            used_modifiers = [mod for mod in modifiers if mod in disallowed_modifiers]
-                            disallowed_modifier_passes.append((
-                                r_song_original, 
-                                level, 
-                                difficulty,
-                                used_modifiers,
-                                acc * 100
-                            ))
-                            logger.info(f"Skipping {r_song_original} - Disallowed modifiers: {modifiers}")
+                            # Save disallowed pass to database
+                            try:
+                                db_song_key = f"{song_name_lower}:{characteristic}:{difficulty.replace('Expert+', 'ExpertPlus')}"
+                                existing_acc = 0
+                                
+                                # Check if we have a better score for this map+modifiers already
+                                conn = sqlite3.connect(USER_PASSES_DB)
+                                c = conn.cursor()
+                                c.execute("""
+                                    SELECT accuracy FROM disallowed_passes 
+                                    WHERE discord_id = ? 
+                                    AND song_name = ? 
+                                    AND characteristic = ? 
+                                    AND difficulty = ?
+                                    AND modifiers = ?
+                                """, (discord_id, r_song_original, characteristic, difficulty, ','.join(sorted(used_disallowed_mods))))
+                                
+                                existing = c.fetchone()
+                                if existing:
+                                    existing_acc = existing[0]
+                                
+                                # Only save if this is a better score
+                                if acc * 100 > existing_acc:
+                                    c.execute("""
+                                        INSERT OR REPLACE INTO disallowed_passes 
+                                        (discord_id, beatleader_id, song_name, characteristic, 
+                                         difficulty, level, accuracy, modifiers)
+                                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                                    """, (
+                                        discord_id,
+                                        beatleader_id,
+                                        r_song_original,
+                                        characteristic,
+                                        difficulty,
+                                        level,
+                                        acc * 100,
+                                        ','.join(sorted(used_disallowed_mods))
+                                    ))
+                                    conn.commit()
+                                    
+                                    # Add to our list for the notification
+                                    disallowed_modifier_passes.append((
+                                        r_song_original,
+                                        level,
+                                        difficulty,
+                                        used_disallowed_mods,
+                                        acc * 100
+                                    ))
+                                    
+                                    logger.info(f"Saved disallowed pass for {r_song_original} with mods: {used_disallowed_mods}")
+                                
+                            except Exception as e:
+                                logger.error(f"Error saving disallowed pass: {e}", exc_info=True)
+                            finally:
+                                conn.close()
+                            
                             continue
                             
                         points = round(level * acc * 21.3)
@@ -828,29 +893,42 @@ class SSCTools(commands.Cog):
             
             # Create a separate embed for disallowed modifier passes if any
             if disallowed_modifier_passes:
-                disallowed_embed = discord.Embed(
-                    title="⚠️ Passes with Disallowed Modifiers",
-                    description=(
-                        "The following maps were passed with prohibited modifiers and did not count:\n"
-                        "*(NO, NB, NF, SS, NA, OP modifiers are not allowed for ranked play)*"
-                    ),
-                    color=discord.Color.orange()
-                )
-                
-                # Group passes by modifier for better organization
-                passes_by_modifier = {}
-                for song, level, diff, mods, acc in disallowed_modifier_passes:
-                    for mod in mods:
-                        if mod not in passes_by_modifier:
-                            passes_by_modifier[mod] = []
-                        passes_by_modifier[mod].append((song, level, diff, acc))
-                
-                # Add fields for each modifier
-                for mod, passes in passes_by_modifier.items():
+                try:
+                    # Group passes by song to show all mods together
+                    passes_by_song = {}
+                    for song, level, diff, mods, acc in disallowed_modifier_passes:
+                        key = (song, level, diff)
+                        if key not in passes_by_song:
+                            passes_by_song[key] = {'mods': set(), 'acc': acc}
+                        passes_by_song[key]['mods'].update(mods)
+                        # Keep the highest accuracy for this song
+                        if acc > passes_by_song[key]['acc']:
+                            passes_by_song[key]['acc'] = acc
+                    
+                    # Sort by accuracy descending
+                    sorted_passes = sorted(
+                        [(song, level, diff, data['mods'], data['acc']) 
+                         for (song, level, diff), data in passes_by_song.items()],
+                        key=lambda x: x[4],  # Sort by accuracy
+                        reverse=True
+                    )
+                    
+                    # Create the embed
+                    disallowed_embed = discord.Embed(
+                        title="⚠️ Passes with Disallowed Modifiers",
+                        description=(
+                            "The following maps were passed with prohibited modifiers and did not count:\n"
+                            "*(NO, NB, NF, SS, NA, OP modifiers are not allowed for ranked play)*"
+                        ),
+                        color=discord.Color.orange()
+                    )
+                    
+                    # Add passes to the embed
                     pass_list = []
-                    for song, level, diff, acc in sorted(passes, key=lambda x: x[3], reverse=True):  # Sort by accuracy descending
+                    for song, level, diff, mods, acc in sorted_passes:
+                        mods_str = ', '.join(sorted(mods))
                         pass_list.append(
-                            f"`{acc:5.2f}%` `{diff}` {song[:30]}{'...' if len(song) > 30 else ''} ({mod})"
+                            f"`{acc:5.2f}%` `{diff}` {song[:30]}{'...' if len(song) > 30 else ''} ({mods_str})"
                         )
                     
                     # Split into chunks to avoid hitting field value length limit
@@ -858,12 +936,15 @@ class SSCTools(commands.Cog):
                     for i in range(0, len(pass_list), chunk_size):
                         chunk = pass_list[i:i + chunk_size]
                         disallowed_embed.add_field(
-                            name=f"{mod} Modifier" if i == 0 else "\u200b",  # Only show mod name in first chunk
+                            name="Passes" if i == 0 else "\u200b",
                             value="\n".join(chunk),
                             inline=False
                         )
-                
-                embeds.append(disallowed_embed)
+                    
+                    embeds.append(disallowed_embed)
+                    
+                except Exception as e:
+                    logger.error(f"Error creating disallowed passes embed: {e}", exc_info=True)
             
             # Add stats about new/updated passes
             stats = [
