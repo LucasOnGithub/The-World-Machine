@@ -408,8 +408,8 @@ class SSCTools(commands.Cog):
             if query.startswith('!'):
                 # Search by exact BSR code
                 c.execute("""
-                    SELECT id, song_name, characteristic, difficulty, level, category, 
-                           ranked_by, id, cover_url
+                    SELECT id, song_name, song_author, characteristic, difficulty, level, category, 
+                           ranked_by, id, cover_url, level_author
                     FROM ranked_maps 
                     WHERE id = ?
                     LIMIT ?
@@ -418,8 +418,8 @@ class SSCTools(commands.Cog):
                 # Search by song name (case-insensitive partial match)
                 search_term = f"%{query}%"
                 c.execute("""
-                    SELECT id, song_name, characteristic, difficulty, level, category, 
-                           ranked_by, id, cover_url
+                    SELECT id, song_name, song_author, characteristic, difficulty, level, category, 
+                           ranked_by, id, cover_url, level_author
                     FROM ranked_maps 
                     WHERE LOWER(song_name) LIKE LOWER(?) 
                     ORDER BY 
@@ -443,12 +443,15 @@ class SSCTools(commands.Cog):
             
             # Create embeds for each result (up to the limit)
             embeds = []
-            for idx, (map_id, song_name, char, diff, level, category, 
-                     ranked_by, bsr_code, cover_url) in enumerate(results, 1):
+            for idx, (map_id, song_name, song_author, char, diff, level, category, 
+                     ranked_by, bsr_code, cover_url, level_author) in enumerate(results, 1):
                 
                 # Create embed with map info
+                title = f"{song_author} - {song_name}" if song_author else song_name
+                description = f"Mapped by: {level_author}" if level_author else None
                 embed = discord.Embed(
-                    title=f"{song_name}",
+                    title=title,
+                    description=description,
                     color=discord.Color.blue(),
                     url=f"https://beatsaver.com/maps/{bsr_code}" if bsr_code else None
                 )
@@ -547,32 +550,32 @@ class SSCTools(commands.Cog):
             beatleader_id, discord_username = row
             logger.info(f"Found BeatLeader ID {beatleader_id} for user {discord_username}")
 
-            # Fetch recent scores with pagination
+            # Fetch up to 10 pages of recent scores (1000 scores max)
             all_scores = []
             page = 1
-            total_pages = 1
+            max_pages = 1000
             
             try:
-                while page <= total_pages:
+                while page <= max_pages:
                     url = f"https://api.beatleader.com/player/{beatleader_id}/scores?sortBy=date&order=desc&page={page}&count=100"
+                    
                     async with aiohttp.ClientSession() as session:
                         async with session.get(url) as resp:
                             if resp.status != 200:
-                                await interaction.followup.send("❌ Failed to fetch scores from BeatLeader. Please try again later.")
-                                return
+                                if page == 1:  # Only fail completely if first page fails
+                                    await interaction.followup.send("❌ Failed to fetch scores from BeatLeader. Please try again later.")
+                                    return
+                                break
                             
                             data = await resp.json()
-                            all_scores.extend(data.get("data", []))
+                            page_scores = data.get("data", [])
+                            all_scores.extend(page_scores)
                             
-                            # Update total pages if this is the first request
-                            if page == 1:
-                                total_pages = data.get("metadata", {}).get("totalPages", 1)
+                            if not page_scores:  # Stop if no more scores
+                                break
                                 
                             page += 1
-                            
-                            # Add a small delay between requests to be nice to the API
-                            if page <= total_pages:
-                                await asyncio.sleep(0.5)
+                            await asyncio.sleep(0.5)  # Rate limiting
                 
                 if not all_scores:
                     await interaction.followup.send("❌ No scores found for this player.")
@@ -659,10 +662,29 @@ class SSCTools(commands.Cog):
                 has_disallowed_modifier = len(used_disallowed_mods) > 0
                 
                 # Find matching ranked map
+                logger.info(f"Processing score - Song: '{song_name_lower}', Char: '{characteristic}', Diff: '{difficulty}'")
+                
                 for r_song_lower, r_char, r_diff, level, r_song_original in ranked_maps:
-                    if (r_song_lower == song_name_lower and 
+                    # Normalize both song names for comparison
+                    normalized_db_name = r_song_lower.replace(' ', '').replace('.', '').replace('-', '').replace('_', '').lower()
+                    normalized_score_name = song_name_lower.replace(' ', '').replace('.', '').replace('-', '').replace('_', '').lower()
+                    
+                    # Log detailed comparison info
+                    logger.info(f"Comparing with DB entry - Song: '{r_song_lower}', Original: '{r_song_original}', Char: '{r_char}', Diff: '{r_diff}'")
+                    logger.info(f"Normalized DB: '{normalized_db_name}' vs Score: '{normalized_score_name}'")
+                    
+                    # Check for match with more flexible comparison
+                    exact_match = r_song_lower == song_name_lower
+                    normalized_match = normalized_db_name == normalized_score_name
+                    space_insensitive_match = r_song_lower.replace(' ', '') == song_name_lower.replace(' ', '')
+                    original_case_match = r_song_original.lower() == song_name_lower
+                    
+                    logger.info(f"Match results - Exact: {exact_match}, Normalized: {normalized_match}, NoSpaces: {space_insensitive_match}, OriginalCase: {original_case_match}")
+                    
+                    if ((exact_match or normalized_match or space_insensitive_match or original_case_match) and
                         r_char == characteristic and 
                         r_diff == difficulty):
+                        logger.info(f"MATCH FOUND! - Song: '{r_song_original}', Char: '{r_char}', Diff: '{r_diff}', Level: {level}")
                         
                         # Skip if this is an unranked map (level 100)
                         if level == 100:
@@ -1032,13 +1054,6 @@ class SSCTools(commands.Cog):
         difficulty: Literal["Easy", "Normal", "Hard", "Expert", "Expert+"],
         additional_info: Optional[str] = None
     ):
-        # Validate level (1-32 or exactly 100)
-        if level != 100 and not (1 <= level <= 32):
-            await interaction.response.send_message(
-                "❌ Level must be between 1-32 for ranked maps, or exactly 100 for unranked maps.",
-                ephemeral=True
-            )
-            return
         """Rank a Beat Saber map.
         
         Parameters
@@ -1051,11 +1066,11 @@ class SSCTools(commands.Cog):
         logger.info(f"Rankmap command invoked by {interaction.user} (ID: {interaction.user.id}) with BSR: {bsr_code}")
         logger.debug(f"Command params - Category: {category}, Level: {level}, Characteristic: {characteristic}, Difficulty: {difficulty}")
         
-        # Check if level is valid (1-32)
-        if not 1 <= level <= 32:
-            error_msg = f"Invalid level: {level}. Must be between 1 and 32."
+        # Validate level (1-32 for ranked, or exactly 100 for unranked)
+        if level != 100 and not (1 <= level <= 32):
+            error_msg = f"Invalid level: {level}. Must be between 1-32 for ranked maps, or exactly 100 for unranked maps."
             logger.warning(error_msg)
-            await interaction.response.send_message("Level must be between 1 and 32.", ephemeral=True)
+            await interaction.response.send_message(error_msg, ephemeral=True)
             return
 
         # Fetch map data
@@ -1627,37 +1642,49 @@ class SSCTools(commands.Cog):
                 # Direct API URL with player ID
                 player_id = profile_identifier.split('/player/')[-1].split('/')[0].split('?')[0]
                 api_url = f"https://api.beatleader.com/player/{player_id}"
+                logger.debug(f"Extracted player ID from URL: {player_id}")
             else:
                 # It's either a numeric ID or a username
                 if profile_identifier.isdigit():
                     # Direct numeric ID
                     api_url = f"https://api.beatleader.com/player/{profile_identifier}"
+                    logger.debug(f"Using direct player ID: {profile_identifier}")
                 else:
                     # Username search
                     search_url = f"https://api.beatleader.com/players?search={profile_identifier}"
+                    logger.debug(f"Searching for username: {profile_identifier}")
                     async with aiohttp.ClientSession() as session:
                         async with session.get(search_url) as resp:
                             if resp.status != 200:
-                                logger.error(f"Error searching for user {profile_identifier}: HTTP {resp.status}")
+                                logger.error(f"User search failed: {profile_identifier} - HTTP {resp.status}")
                                 return None
                             data = await resp.json()
                             if not data or not data.get('data') or not data['data']:
-                                logger.error(f"No user found with username: {profile_identifier}")
+                                logger.debug(f"No user found: {profile_identifier}")
                                 return None
                             player_id = data['data'][0]['id']
                             api_url = f"https://api.beatleader.com/player/{player_id}"
             
             # Fetch the full profile
-            logger.info(f"Fetching profile from: {api_url}")
-            async with aiohttp.ClientSession() as session:
-                async with session.get(api_url) as resp:
-                    if resp.status != 200:
-                        logger.error(f"Failed to fetch profile from {api_url}: HTTP {resp.status}")
-                        return None
-                    return await resp.json()
+            logger.debug(f"Fetching profile from: {api_url}")
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(api_url) as resp:
+                        if resp.status != 200:
+                            logger.error(f"Profile fetch failed - Status: {resp.status} - URL: {api_url}")
+                            return None
+                        logger.debug(f"Successfully fetched profile from {api_url}")
+                        return await resp.json()
                     
+            except aiohttp.ClientError as e:
+                logger.error(f"Network error fetching profile: {str(e).splitlines()[0]}")
+                return None
+            except Exception as e:
+                logger.error(f"Unexpected error: {str(e).splitlines()[0]}")
+                return None
+                
         except Exception as e:
-            logger.error(f"Error fetching BeatLeader profile: {e}", exc_info=True)
+            logger.error(f"Error in fetch_beatleader_profile: {str(e).splitlines()[0]}")
             return None
     
     def save_application(self, discord_id: str, discord_username: str, profile_data: dict) -> bool:
